@@ -18,10 +18,11 @@ func New(output io.Writer) *TableWriter {
 }
 
 type TableWriter struct {
-	output io.Writer
-	max    []int
-	aligns []int
-	rows   [][]string
+	output  io.Writer
+	max     []int
+	aligns  []int
+	headers [][]string
+	rows    [][]string
 }
 
 var ansi = regexp.MustCompile("[\u001B\u009B][[\\]()#;?]*(?:(?:(?:[a-zA-Z\\d]*(?:;[a-zA-Z\\d]*)*)?\u0007)|(?:(?:\\d{1,4}(?:;\\d{0,4})*)?[\\dA-PRZcf-ntqry=><~]))")
@@ -36,7 +37,21 @@ func (w *TableWriter) SetAligns(aligns ...int) {
 	w.aligns = aligns
 }
 
+func (w *TableWriter) Header(header ...string) {
+	for _, sub := range explode(header) {
+		w.expand(sub...)
+		w.headers = append(w.headers, sub)
+	}
+}
+
 func (w *TableWriter) Add(row ...string) {
+	for _, sub := range explode(row) {
+		w.expand(sub...)
+		w.rows = append(w.rows, sub)
+	}
+}
+
+func (w *TableWriter) expand(row ...string) {
 	if len(w.max) < len(row) {
 		w.max = append(w.max, make([]int, len(row)-len(w.max))...)
 	}
@@ -52,8 +67,20 @@ func (w *TableWriter) Add(row ...string) {
 			w.max[i] = size
 		}
 	}
+}
 
-	w.rows = append(w.rows, row)
+func explode(row []string) [][]string {
+	result := [][]string{row}
+	for i := range row {
+		sub := strings.Split(strings.TrimSuffix(strings.ReplaceAll(row[i], "\r", ""), "\n"), "\n")
+		for j := range sub {
+			if j >= len(result) {
+				result = append(result, make([]string, len(row)))
+			}
+			result[j][i] = sub[j]
+		}
+	}
+	return result
 }
 
 func (w *TableWriter) Flush() {
@@ -62,6 +89,23 @@ func (w *TableWriter) Flush() {
 	output := w.output
 	if output == nil {
 		output = os.Stdout
+	}
+
+	if len(w.headers) > 0 {
+		for _, header := range w.headers {
+			buf.Reset()
+
+			for i := range header {
+				size := runewidth.StringWidth(ansi.ReplaceAllLiteralString(header[i], ""))
+				if i > 0 {
+					fmt.Fprint(buf, " ")
+				}
+				fmt.Fprint(buf, header[i])
+				fmt.Fprint(buf, strings.Repeat(" ", w.max[i]-size))
+			}
+
+			fmt.Fprintln(output, buf.String())
+		}
 	}
 
 	for _, row := range w.rows {
